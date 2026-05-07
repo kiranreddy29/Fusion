@@ -372,7 +372,7 @@ def AssistantshipClaim_account_notify(sender, stu, recipient):
                 url=url, module=module, verb=message)
 
 
-def department_notif(sender, recipient, type):
+def department_notif(sender, recipient, type, department='ALL', programme='ALL', batch='ALL'):
     url = 'dep:dep'
     module = 'department'
     sender = sender
@@ -385,7 +385,10 @@ def department_notif(sender, recipient, type):
                 url=url,
                 module=module,
                 verb=verb,
-                flag=flag)
+                flag=flag,
+                department=department,
+                programme=programme,
+                batch=batch)
 def examination_notif(sender, recipient, type):
     url='examination:examination'
     module='examination'

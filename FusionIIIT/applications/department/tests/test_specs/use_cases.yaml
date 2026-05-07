@@ -1,0 +1,1153 @@
+# ==================== Use Case Tests ====================
+uc_tests:
+  # -------------------------------------------------------------
+  # DEPT-UC-001: View Announcements
+  # -------------------------------------------------------------
+  - test_id: DEPT-UC-001-HAPPY
+    source_type: UC
+    source_id: DEPT-UC-001
+    method: GET
+    url: /department/announcements/
+    headers: {}
+    params: {}
+    body: {}
+    auth:
+      role: Faculty
+    session: {}
+    assertions:
+      - status_code: 200
+      - contains: "Announcements"
+  - test_id: DEPT-UC-001-ALT
+    source_type: UC
+    source_id: DEPT-UC-001
+    method: GET
+    url: /department/announcements/
+    headers: {}
+    params:
+      program: "MTech"
+    body: {}
+    auth:
+      role: Student
+    session: {}
+    assertions:
+      - status_code: 200
+      - contains: "program_filter"
+      - not_contains: "admin_only"
+  - test_id: DEPT-UC-001-EXC
+    source_type: UC
+    source_id: DEPT-UC-001
+    method: GET
+    url: /department/announcements/
+    headers: {}
+    params: {}
+    body: {}
+    auth:
+      role: Anonymous
+    session: {}
+    assertions:
+      - status_code: 403
+  # -------------------------------------------------------------
+  # DEPT-UC-002: Create Announcement
+  # -------------------------------------------------------------
+  - test_id: DEPT-UC-002-HAPPY
+    source_type: UC
+    source_id: DEPT-UC-002
+    method: POST
+    url: /department/announcements/create/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      title: "New Event"
+      content: "Details of the event"
+      audience: ["Student", "Faculty"]
+    auth:
+      role: Dept_Admin
+    session: {}
+    assertions:
+      - status_code: 302
+      - redirect_url: "/department/announcements/"
+  - test_id: DEPT-UC-002-ALT
+    source_type: UC
+    source_id: DEPT-UC-002
+    method: POST
+    url: /department/announcements/create/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      title: "Dept Notice"
+      content: "Important info"
+      audience: []   # invalid – empty audience
+    auth:
+      role: HOD
+    session: {}
+    assertions:
+      - status_code: 400
+      - json_fields:
+          error: "Audience must contain at least one role"
+  - test_id: DEPT-UC-002-EXC
+    source_type: UC
+    source_id: DEPT-UC-002
+    method: POST
+    url: /department/announcements/create/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      title: "Attempt"
+      content: "Should fail"
+      audience: ["Student"]
+    auth:
+      role: Student
+    session: {}
+    assertions:
+      - status_code: 403
+  # -------------------------------------------------------------
+  # DEPT-UC-003: Remove Announcement
+  # -------------------------------------------------------------
+  - test_id: DEPT-UC-003-HAPPY
+    source_type: UC
+    source_id: DEPT-UC-003
+    method: POST
+    url: /department/announcements/1/delete/
+    headers: {}
+    params: {}
+    body: {}
+    auth:
+      role: HOD
+    session: {}
+    assertions:
+      - status_code: 302
+      - redirect_url: "/department/announcements/"
+  - test_id: DEPT-UC-003-ALT
+    source_type: UC
+    source_id: DEPT-UC-003
+    method: POST
+    url: /department/announcements/1/delete/
+    headers: {}
+    params: {}
+    body: {}
+    auth:
+      role: Faculty
+    session: {}
+    assertions:
+      - status_code: 403
+  - test_id: DEPT-UC-003-EXC
+    source_type: UC
+    source_id: DEPT-UC-003
+    method: POST
+    url: /department/announcements/invalid/delete/
+    headers: {}
+    params: {}
+    body: {}
+    auth:
+      role: HOD
+    session: {}
+    assertions:
+      - status_code: 404
+  # -------------------------------------------------------------
+  # DEPT-UC-004: Request Stock Item
+  # -------------------------------------------------------------
+  - test_id: DEPT-UC-004-HAPPY
+    source_type: UC
+    source_id: DEPT-UC-004
+    method: POST
+    url: /department/stock/request/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      item_id: 12
+      quantity: 5
+      reason: "Lab work"
+    auth:
+      role: Faculty
+    session: {}
+    assertions:
+      - status_code: 200
+      - json_fields:
+          request_status: "pending"
+  - test_id: DEPT-UC-004-ALT
+    source_type: UC
+    source_id: DEPT-UC-004
+    method: POST
+    url: /department/stock/request/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      item_id: 12
+      quantity: 0
+      reason: "Invalid qty"
+    auth:
+      role: Faculty
+    session: {}
+    assertions:
+      - status_code: 400
+  - test_id: DEPT-UC-004-EXC
+    source_type: UC
+    source_id: DEPT-UC-004
+    method: POST
+    url: /department/stock/request/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      item_id: 99
+      quantity: 3
+      reason: "Non‑existent item"
+    auth:
+      role: Student
+    session: {}
+    assertions:
+      - status_code: 403
+  # -------------------------------------------------------------
+  # DEPT-UC-005: Approve or Reject Stock Request
+  # -------------------------------------------------------------
+  - test_id: DEPT-UC-005-HAPPY
+    source_type: UC
+    source_id: DEPT-UC-005
+    method: POST
+    url: /department/stock/1/approve/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      decision: "approve"
+    auth:
+      role: HOD
+    session: {}
+    assertions:
+      - status_code: 200
+      - json_fields:
+          status: "approved"
+  - test_id: DEPT-UC-005-ALT
+    source_type: UC
+    source_id: DEPT-UC-005
+    method: POST
+    url: /department/stock/1/approve/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      decision: "reject"
+    auth:
+      role: HOD
+    session: {}
+    assertions:
+      - status_code: 200
+      - json_fields:
+          status: "rejected"
+  - test_id: DEPT-UC-005-EXC
+    source_type: UC
+    source_id: DEPT-UC-005
+    method: POST
+    url: /department/stock/1/approve/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      decision: "approve"
+    auth:
+      role: Faculty
+    session: {}
+    assertions:
+      - status_code: 403
+  # -------------------------------------------------------------
+  # DEPT-UC-006: Allocate and Issue Stock
+  # -------------------------------------------------------------
+  - test_id: DEPT-UC-006-HAPPY
+    source_type: UC
+    source_id: DEPT-UC-006
+    method: POST
+    url: /department/stock/1/issue/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      allocate_to: "Lab001"
+      qty: 5
+    auth:
+      role: Dept_Admin
+    session: {}
+    assertions:
+      - status_code: 200
+      - json_fields:
+          issued: true
+  - test_id: DEPT-UC-006-ALT
+    source_type: UC
+    source_id: DEPT-UC-006
+    method: POST
+    url: /department/stock/1/issue/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      allocate_to: "Lab001"
+      qty: 0
+    auth:
+      role: Dept_Admin
+    session: {}
+    assertions:
+      - status_code: 400
+  - test_id: DEPT-UC-006-EXC
+    source_type: UC
+    source_id: DEPT-UC-006
+    method: POST
+    url: /department/stock/1/issue/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      allocate_to: "Lab001"
+      qty: 5
+    auth:
+      role: Faculty
+    session: {}
+    assertions:
+      - status_code: 403
+  # -------------------------------------------------------------
+  # DEPT-UC-007: Submit Feedback
+  # -------------------------------------------------------------
+  - test_id: DEPT-UC-007-HAPPY
+    source_type: UC
+    source_id: DEPT-UC-007
+    method: POST
+    url: /department/feedback/submit/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      title: "Course material"
+      message: "Need more examples"
+    auth:
+      role: Student
+    session: {}
+    assertions:
+      - status_code: 200
+      - json_fields:
+          submitted: true
+  - test_id: DEPT-UC-007-ALT
+    source_type: UC
+    source_id: DEPT-UC-007
+    method: POST
+    url: /department/feedback/submit/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      title: "Lab equipment"
+      message: ""
+    auth:
+      role: Faculty
+    session: {}
+    assertions:
+      - status_code: 400
+  - test_id: DEPT-UC-007-EXC
+    source_type: UC
+    source_id: DEPT-UC-007
+    method: POST
+    url: /department/feedback/submit/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      title: "General"
+      message: "Test"
+    auth:
+      role: Anonymous
+    session: {}
+    assertions:
+      - status_code: 403
+  # -------------------------------------------------------------
+  # DEPT-UC-008: Review and Resolve Feedback
+  # -------------------------------------------------------------
+  - test_id: DEPT-UC-008-HAPPY
+    source_type: UC
+    source_id: DEPT-UC-008
+    method: POST
+    url: /department/feedback/1/resolve/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      resolution: "addressed"
+    auth:
+      role: HOD
+    session: {}
+    assertions:
+      - status_code: 200
+      - json_fields:
+          resolved: true
+  - test_id: DEPT-UC-008-ALT
+    source_type: UC
+    source_id: DEPT-UC-008
+    method: POST
+    url: /department/feedback/1/resolve/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      resolution: ""
+    auth:
+      role: Dept_Admin
+    session: {}
+    assertions:
+      - status_code: 400
+  - test_id: DEPT-UC-008-EXC
+    source_type: UC
+    source_id: DEPT-UC-008
+    method: POST
+    url: /department/feedback/1/resolve/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      resolution: "ignored"
+    auth:
+      role: Student
+    session: {}
+    assertions:
+      - status_code: 403
+  # -------------------------------------------------------------
+  # DEPT-UC-009: Manage Timetable
+  # -------------------------------------------------------------
+  - test_id: DEPT-UC-009-HAPPY
+    source_type: UC
+    source_id: DEPT-UC-009
+    method: POST
+    url: /department/timetable/create/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      course: "CS101"
+      day: "Monday"
+      start: "10:00"
+      end: "12:00"
+    auth:
+      role: Dept_Admin
+    session: {}
+    assertions:
+      - status_code: 302
+      - redirect_url: "/department/timetable/"
+  - test_id: DEPT-UC-009-ALT
+    source_type: UC
+    source_id: DEPT-UC-009
+    method: POST
+    url: /department/timetable/create/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      course: "CS101"
+      day: "Monday"
+      start: "11:00"
+      end: "13:00"
+    auth:
+      role: Dept_Admin
+    session: {}
+    assertions:
+      - status_code: 400
+      - contains: "conflict"
+  - test_id: DEPT-UC-009-EXC
+    source_type: UC
+    source_id: DEPT-UC-009
+    method: POST
+    url: /department/timetable/create/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      course: ""
+      day: "Monday"
+      start: "10:00"
+      end: "12:00"
+    auth:
+      role: Faculty
+    session: {}
+    assertions:
+      - status_code: 403
+  # -------------------------------------------------------------
+  # DEPT-UC-009-FILE: Upload Timetable CSV
+  # -------------------------------------------------------------
+  - test_id: DEPT-UC-009-FILE
+    source_type: UC
+    source_id: DEPT-UC-009
+    method: POST
+    url: /department/timetable/upload/
+    headers: {}
+    params: {}
+    body: {}
+    files:
+      - field: file
+        path: sample.csv
+    auth:
+      role: Dept_Admin
+    session: {}
+    assertions:
+      - status_code: 200
+  # -------------------------------------------------------------
+  # DEPT-UC-010: User Profile and Department Details
+  # -------------------------------------------------------------
+  - test_id: DEPT-UC-010-HAPPY
+    source_type: UC
+    source_id: DEPT-UC-010
+    method: GET
+    url: /department/profile/
+    headers: {}
+    params: {}
+    body: {}
+    auth:
+      role: Student
+    session:
+      user_id: 10
+      role: Student
+    assertions:
+      - status_code: 200
+      - contains: "student_user"
+  - test_id: DEPT-UC-010-ALT
+    source_type: UC
+    source_id: DEPT-UC-010
+    method: GET
+    url: /department/profile/
+    headers: {}
+    params: {}
+    body: {}
+    auth:
+      role: Faculty
+    session: {}
+    assertions:
+      - status_code: 200
+  - test_id: DEPT-UC-010-EXC
+    source_type: UC
+    source_id: DEPT-UC-010
+    method: GET
+    url: /department/profile/
+    headers: {}
+    params: {}
+    body: {}
+    auth:
+      role: Anonymous
+    session: {}
+    assertions:
+      - status_code: 302
+      - redirect_url: "/login/"
+  # -------------------------------------------------------------
+  # DEPT-UC-011: View Department Resources
+  # -------------------------------------------------------------
+  - test_id: DEPT-UC-011-HAPPY
+    source_type: UC
+    source_id: DEPT-UC-011
+    method: GET
+    url: /department/resources/
+    headers: {}
+    params: {}
+    body: {}
+    auth:
+      role: Faculty
+    session: {}
+    assertions:
+      - status_code: 200
+      - contains: "resource_list"
+  - test_id: DEPT-UC-011-ALT
+    source_type: UC
+    source_id: DEPT-UC-011
+    method: GET
+    url: /department/resources/
+    headers: {}
+    params: {}
+    body: {}
+    auth:
+      role: Student
+    session: {}
+    assertions:
+      - status_code: 200
+  - test_id: DEPT-UC-011-EXC
+    source_type: UC
+    source_id: DEPT-UC-011
+    method: GET
+    url: /department/resources/
+    headers: {}
+    params: {}
+    body: {}
+    auth:
+      role: Anonymous
+    session: {}
+    assertions:
+      - status_code: 403
+  # -------------------------------------------------------------
+  # DEPT-UC-012: Approve Official Department Changes
+  # -------------------------------------------------------------
+  - test_id: DEPT-UC-012-HAPPY
+    source_type: UC
+    source_id: DEPT-UC-012
+    method: POST
+    url: /department/changes/1/approve/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body: {}
+    auth:
+      role: HOD
+    session: {}
+    assertions:
+      - status_code: 200
+      - json_fields:
+          approved: true
+  - test_id: DEPT-UC-012-ALT
+    source_type: UC
+    source_id: DEPT-UC-012
+    method: POST
+    url: /department/changes/1/approve/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body: {}
+    auth:
+      role: Faculty
+    session: {}
+    assertions:
+      - status_code: 403
+  - test_id: DEPT-UC-012-EXC
+    source_type: UC
+    source_id: DEPT-UC-012
+    method: POST
+    url: /department/changes/invalid/approve/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body: {}
+    auth:
+      role: HOD
+    session: {}
+    assertions:
+      - status_code: 404
+  # -------------------------------------------------------------
+  # DEPT-UC-013: Send System Notifications
+  # -------------------------------------------------------------
+  - test_id: DEPT-UC-013-HAPPY
+    source_type: UC
+    source_id: DEPT-UC-013
+    method: POST
+    url: /department/notifications/send/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      message: "System maintenance at 5 PM"
+      recipients: ["Student", "Faculty"]
+    auth:
+      role: HOD
+    session: {}
+    assertions:
+      - status_code: 302
+      - redirect_url: "/department/notifications/"
+  - test_id: DEPT-UC-013-ALT
+    source_type: UC
+    source_id: DEPT-UC-013
+    method: POST
+    url: /department/notifications/send/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      message: ""
+      recipients: []
+    auth:
+      role: HOD
+    session: {}
+    assertions:
+      - status_code: 400
+  - test_id: DEPT-UC-013-EXC
+    source_type: UC
+    source_id: DEPT-UC-013
+    method: POST
+    url: /department/notifications/send/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      message: "Urgent"
+      recipients: ["Student"]
+    auth:
+      role: Student
+    session: {}
+    assertions:
+      - status_code: 403
+# ==================== Business Rule Tests ====================
+br_tests:
+  - test_id: BR-DEPT-001-VALID
+    source_type: BR
+    source_id: BR-DEPT-001
+    method: POST
+    url: /department/announcements/create/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      title: "Valid"
+      content: "Content"
+      audience: ["Student"]
+    auth:
+      role: Faculty
+    session: {}
+    assertions:
+      - status_code: 302
+      - redirect_url: "/department/announcements/"
+  - test_id: BR-DEPT-001-INVALID
+    source_type: BR
+    source_id: BR-DEPT-001
+    method: POST
+    url: /department/announcements/create/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      title: "Invalid"
+      content: "Content"
+      audience: ["Student"]
+    auth:
+      role: Student
+    session: {}
+    assertions:
+      - status_code: 403
+  - test_id: BR-DEPT-002-VALID
+    source_type: BR
+    source_id: BR-DEPT-002
+    method: GET
+    url: /department/announcements/
+    headers: {}
+    params:
+      program: "BTech"
+      year: "2024"
+    body: {}
+    auth:
+      role: Faculty
+    session: {}
+    assertions:
+      - status_code: 200
+      - contains: "program_filter"
+  - test_id: BR-DEPT-002-INVALID
+    source_type: BR
+    source_id: BR-DEPT-002
+    method: GET
+    url: /department/announcements/
+    headers: {}
+    params:
+      program: "BTech"
+      year: "2024"
+    body: {}
+    auth:
+      role: Anonymous
+    session: {}
+    assertions:
+      - status_code: 403
+  - test_id: BR-DEPT-003-VALID
+    source_type: BR
+    source_id: BR-DEPT-003
+    method: POST
+    url: /department/announcements/create/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      title: "Info"
+      content: "Valid content"
+      audience: ["Student"]
+    auth:
+      role: Dept_Admin
+    session: {}
+    assertions:
+      - status_code: 302
+  - test_id: BR-DEPT-003-INVALID
+    source_type: BR
+    source_id: BR-DEPT-003
+    method: POST
+    url: /department/announcements/create/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      title: ""
+      content: ""
+      audience: []
+    auth:
+      role: Dept_Admin
+    session: {}
+    assertions:
+      - status_code: 400
+  - test_id: BR-DEPT-004-VALID
+    source_type: BR
+    source_id: BR-DEPT-004
+    method: POST
+    url: /department/announcements/1/delete/
+    headers: {}
+    params: {}
+    body: {}
+    auth:
+      role: HOD
+    session: {}
+    assertions:
+      - status_code: 302
+  - test_id: BR-DEPT-004-INVALID
+    source_type: BR
+    source_id: BR-DEPT-004
+    method: POST
+    url: /department/announcements/1/delete/
+    headers: {}
+    params: {}
+    body: {}
+    auth:
+      role: Faculty
+    session: {}
+    assertions:
+      - status_code: 403
+  - test_id: BR-DEPT-005-VALID
+    source_type: BR
+    source_id: BR-DEPT-005
+    method: POST
+    url: /department/stock/request/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      item_id: 7
+      quantity: 2
+      reason: "Lab"
+    auth:
+      role: Faculty
+    session: {}
+    assertions:
+      - status_code: 200
+      - json_fields:
+          request_status: "pending"
+  - test_id: BR-DEPT-005-INVALID
+    source_type: BR
+    source_id: BR-DEPT-005
+    method: POST
+    url: /department/stock/request/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      item_id: 7
+      quantity: 2
+      reason: "Lab"
+    auth:
+      role: Student
+    session: {}
+    assertions:
+      - status_code: 403
+  - test_id: BR-DEPT-006-VALID
+    source_type: BR
+    source_id: BR-DEPT-006
+    method: POST
+    url: /department/stock/1/approve/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      decision: "approve"
+    auth:
+      role: HOD
+    session: {}
+    assertions:
+      - status_code: 200
+      - json_fields:
+          status: "approved"
+  - test_id: BR-DEPT-006-INVALID
+    source_type: BR
+    source_id: BR-DEPT-006
+    method: POST
+    url: /department/stock/1/approve/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      decision: "approve"
+    auth:
+      role: Faculty
+    session: {}
+    assertions:
+      - status_code: 403
+  - test_id: BR-DEPT-007-VALID
+    source_type: BR
+    source_id: BR-DEPT-007
+    method: POST
+    url: /department/stock/1/issue/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      allocate_to: "LabA"
+      qty: 3
+    auth:
+      role: Dept_Admin
+    session: {}
+    assertions:
+      - status_code: 200
+      - json_fields:
+          issued: true
+  - test_id: BR-DEPT-007-INVALID
+    source_type: BR
+    source_id: BR-DEPT-007
+    method: POST
+    url: /department/stock/1/issue/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      allocate_to: "LabA"
+      qty: 3
+    auth:
+      role: Faculty
+    session: {}
+    assertions:
+      - status_code: 403
+  - test_id: BR-DEPT-008-VALID
+    source_type: BR
+    source_id: BR-DEPT-008
+    method: POST
+    url: /department/feedback/submit/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      title: "Issue"
+      message: "Problem description"
+    auth:
+      role: Student
+    session: {}
+    assertions:
+      - status_code: 200
+      - json_fields:
+          submitted: true
+  - test_id: BR-DEPT-008-INVALID
+    source_type: BR
+    source_id: BR-DEPT-008
+    method: POST
+    url: /department/feedback/submit/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      title: "Issue"
+      message: "Problem description"
+    auth:
+      role: Anonymous
+    session: {}
+    assertions:
+      - status_code: 403
+  - test_id: BR-DEPT-009-VALID
+    source_type: BR
+    source_id: BR-DEPT-009
+    method: POST
+    url: /department/timetable/create/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      course: "CS102"
+      day: "Tuesday"
+      start: "09:00"
+      end: "11:00"
+    auth:
+      role: Dept_Admin
+    session: {}
+    assertions:
+      - status_code: 302
+  - test_id: BR-DEPT-009-INVALID
+    source_type: BR
+    source_id: BR-DEPT-009
+    method: POST
+    url: /department/timetable/create/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body:
+      course: "CS102"
+      day: "Tuesday"
+      start: "10:00"
+      end: "09:00"
+    auth:
+      role: Dept_Admin
+    session: {}
+    assertions:
+      - status_code: 400
+  - test_id: BR-DEPT-010-VALID
+    source_type: BR
+    source_id: BR-DEPT-010
+    method: GET
+    url: /department/changes/1/
+    headers: {}
+    params: {}
+    body: {}
+    auth:
+      role: HOD
+    session: {}
+    assertions:
+      - status_code: 200
+      - contains: "official_data"
+  - test_id: BR-DEPT-010-INVALID
+    source_type: BR
+    source_id: BR-DEPT-010
+    method: GET
+    url: /department/changes/1/
+    headers: {}
+    params: {}
+    body: {}
+    auth:
+      role: Faculty
+    session: {}
+    assertions:
+      - status_code: 403
+  - test_id: BR-DEPT-011-VALID
+    source_type: BR
+    source_id: BR-DEPT-011
+    method: GET
+    url: /department/resources/
+    headers: {}
+    params: {}
+    body: {}
+    auth:
+      role: Faculty
+    session: {}
+    assertions:
+      - status_code: 200
+      - contains: "resource_list"
+  - test_id: BR-DEPT-011-INVALID
+    source_type: BR
+    source_id: BR-DEPT-011
+    method: GET
+    url: /department/resources/
+    headers: {}
+    params: {}
+    body: {}
+    auth:
+      role: Anonymous
+    session: {}
+    assertions:
+      - status_code: 403
+  - test_id: BR-DEPT-012-VALID
+    source_type: BR
+    source_id: BR-DEPT-012
+    method: POST
+    url: /department/changes/1/approve/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body: {}
+    auth:
+      role: HOD
+    session: {}
+    assertions:
+      - status_code: 200
+      - json_fields:
+          approved: true
+  - test_id: BR-DEPT-012-INVALID
+    source_type: BR
+    source_id: BR-DEPT-012
+    method: POST
+    url: /department/changes/1/approve/
+    headers:
+      Content-Type: application/json
+    params: {}
+    body: {}
+    auth:
+      role: Faculty
+    session: {}
+    assertions:
+      - status_code: 403
+# ==================== Workflow Tests ====================
+wf_tests:
+  # -------------------------------------------------------------
+  # DEPT-WF-103: Stock request → approval → issuance (Happy)
+  # -------------------------------------------------------------
+  - test_id: WF-103-HAPPY
+    source_type: WF
+    source_id: DEPT-WF-103
+    steps:
+      - method: POST
+        url: /department/stock/request/
+        headers:
+          Content-Type: application/json
+        params: {}
+        body:
+          item_id: 5
+          quantity: 4
+          reason: "Project"
+        auth:
+          role: Faculty
+        session: {}
+        assertions:
+          - status_code: 200
+          - json_fields:
+              request_status: "pending"
+      - method: POST
+        url: /department/stock/1/approve/
+        headers:
+          Content-Type: application/json
+        params: {}
+        body:
+          decision: "approve"
+        auth:
+          role: HOD
+        session: {}
+        assertions:
+          - status_code: 200
+          - json_fields:
+              status: "approved"
+      - method: POST
+        url: /department/stock/1/issue/
+        headers:
+          Content-Type: application/json
+        params: {}
+        body:
+          allocate_to: "LabB"
+          qty: 4
+        auth:
+          role: Dept_Admin
+        session: {}
+        assertions:
+          - status_code: 200
+          - json_fields:
+              issued: true
+  # -------------------------------------------------------------
+  # DEPT-WF-103: Negative path (rejection)
+  # -------------------------------------------------------------
+  - test_id: WF-103-NEGATIVE
+    source_type: WF
+    source_id: DEPT-WF-103
+    steps:
+      - method: POST
+        url: /department/stock/request/
+        headers:
+          Content-Type: application/json
+        params: {}
+        body:
+          item_id: 5
+          quantity: 4
+          reason: "Project"
+        auth:
+          role: Faculty
+        session: {}
+        assertions:
+          - status_code: 200
+          - json_fields:
+              request_status: "pending"
+      - method: POST
+        url: /department/stock/1/approve/
+        headers:
+          Content-Type: application/json
+        params: {}
+        body:
+          decision: "reject"
+        auth:
+          role: HOD
+        session: {}
+        assertions:
+          - status_code: 200
+          - json_fields:
+              status: "rejected"

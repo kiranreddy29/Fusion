@@ -34,7 +34,7 @@ urlpatterns = [
     url(r'^aims/', include('applications.academic_information.urls')),
     url(r'^notifications/', include('applications.notifications_extension.urls')),
     url(r'^estate/', include('applications.estate_module.urls')),
-    url(r'^dep/', include('applications.department.urls')),
+    url(r'^department/?', include('applications.department.urls')),
     url(r'^programme_curriculum/',include('applications.programme_curriculum.urls')),
     url(r'^iwdModuleV2/', include('applications.iwdModuleV2.urls')),
     url(r'^__debug__/', include(debug_toolbar.urls)),

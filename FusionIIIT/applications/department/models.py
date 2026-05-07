@@ -28,6 +28,8 @@ class Announcements(models.Model):
     department = models.CharField(max_length=40,default="ALL")
     programme = models.CharField(max_length=10)
     upload_announcement = models.FileField(upload_to='department/upload_announcement', null=True, default=None)
+    is_hidden = models.BooleanField(default=False)
+    
     def __str__(self):
         return str(self.maker_id.user.username)
     
@@ -69,3 +71,85 @@ class Facility(models.Model):
 
     def __str__(self):
         return f"{self.branch} - {self.name}"
+
+
+class StockItem(models.Model):
+    """
+    Represents an inventory item within a department.
+    Supports DEPT-UC-004, UC-005, UC-006 (Stock Request/Approve/Issue workflow).
+    """
+    name = models.CharField(max_length=100)
+    quantity = models.PositiveIntegerField(default=0)
+    price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    department = models.CharField(max_length=50)
+    last_updated = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.name} ({self.department}) - Qty: {self.quantity}"
+
+    class Meta:
+        ordering = ['-last_updated']
+
+
+class StockRequest(models.Model):
+    """
+    Represents a stock request made by faculty/staff.
+    Part of workflow DEPT-WF-103: Stock Request → Approval → Issuance.
+    """
+    STATUS_CHOICES = [
+        ('Pending', 'Pending'),
+        ('Approved', 'Approved'),
+        ('Rejected', 'Rejected'),
+        ('Issued', 'Issued'),
+    ]
+
+    requester = models.ForeignKey(ExtraInfo, on_delete=models.CASCADE, related_name='stock_requests')
+    stock_item = models.ForeignKey(StockItem, on_delete=models.CASCADE, related_name='requests')
+    quantity_requested = models.PositiveIntegerField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Pending')
+    request_date = models.DateTimeField(auto_now_add=True)
+    remarks = models.TextField(blank=True, default='')
+    approved_by = models.ForeignKey(
+        ExtraInfo, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='stock_approvals'
+    )
+    approval_date = models.DateTimeField(null=True, blank=True)
+    issued_by = models.ForeignKey(
+        ExtraInfo, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='stock_issuances'
+    )
+    issued_date = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"Request by {self.requester} for {self.stock_item.name} - {self.status}"
+
+    class Meta:
+        ordering = ['-request_date']
+
+
+class StockLog(models.Model):
+    """
+    Audit log for all stock-related actions.
+    Maintains transparency and traceability for DEPT-WF-103.
+    """
+    ACTION_CHOICES = [
+        ('Request', 'Request'),
+        ('Approve', 'Approve'),
+        ('Reject', 'Reject'),
+        ('Issue', 'Issue'),
+        ('Add', 'Add'),
+        ('Update', 'Update'),
+    ]
+
+    stock_item = models.ForeignKey(StockItem, on_delete=models.CASCADE, related_name='logs')
+    action = models.CharField(max_length=20, choices=ACTION_CHOICES)
+    performed_by = models.ForeignKey(ExtraInfo, on_delete=models.CASCADE)
+    quantity = models.IntegerField(default=0)
+    timestamp = models.DateTimeField(auto_now_add=True)
+    remarks = models.TextField(blank=True, default='')
+
+    def __str__(self):
+        return f"{self.action} - {self.stock_item.name} by {self.performed_by}"
+
+    class Meta:
+        ordering = ['-timestamp']

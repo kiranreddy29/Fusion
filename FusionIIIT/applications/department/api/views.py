@@ -1,15 +1,31 @@
 from rest_framework import generics
 from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated
 from applications.department.models import Announcements
 from applications.department.models import Facility
+from applications.department.models import StockItem, StockRequest, StockLog
 from applications.academic_information.models import Spi, Student
 from applications.globals.models import (Designation, ExtraInfo,
                                          HoldsDesignation,Faculty)
 from applications.eis.models import (faculty_about, emp_research_projects)
 from .serializers import (AnnouncementSerializer,ExtraInfoSerializer,SpiSerializer,StudentSerializer,DesignationSerializer
-                          ,HoldsDesignationSerializer,FacultySerializer,faculty_aboutSerializer,emp_research_projectsSerializer, FacilitiesSerializer)
-from rest_framework.permissions import IsAuthenticated
-from .permissions import IsFacultyStaffOrReadOnly
+                          ,HoldsDesignationSerializer,FacultySerializer,faculty_aboutSerializer,emp_research_projectsSerializer, FacilitiesSerializer,
+                          StockItemSerializer, StockRequestSerializer, StockLogSerializer)
+from .permissions import (IsFacultyStaffOrReadOnly, IsStudentOrFaculty,
+                          IsFacultyOrStaff, IsHODOrDeptAdmin, IsHOD, IsStudentOnly, IsHODOrDeptAdminOrFaculty, IsDeptAdmin)
+from ..selectors import (
+    get_announcements_selector,
+    get_stock_items_selector,
+    get_stock_requests_selector,
+    get_stock_logs_selector,
+    get_student_courses_selector
+)
+from ..services import (
+    create_announcement_service,
+    create_stock_request_service,
+    approve_stock_request_service,
+    issue_stock_service
+)
 from django.http import JsonResponse 
 from django.shortcuts import get_object_or_404, render, redirect
 from django.contrib.auth.models import User
@@ -34,91 +50,132 @@ from datetime import datetime
 current_year = datetime.now().year
 current_month = datetime.now().month
 yearset = current_year if current_month > 8 else current_year - 1
+
+
+# =====================
+# Announcement Views
+# =====================
+
 class ListCreateAnnouncementView(generics.ListCreateAPIView):
+    """
+    Create announcements. Only faculty/staff can create (BR-DEPT-001).
+    Sends notification to department users on creation (BR-DEPT-014).
+    """
+    permission_classes = [IsAuthenticated, IsFacultyOrStaff]
+
     def post(self, request):
-        # Get the current user from the request
-        user = request.user
-        usrnm = get_object_or_404(User, username=user.username)
-        user_info = ExtraInfo.objects.select_related('user', 'department').filter(user=usrnm).first()
+        create_announcement_service(
+            maker_user=request.user,
+            message=request.data.get('message', ''),
+            batch=request.data.get('batch', 'ALL'),
+            programme=request.data.get('programme', 'ALL'),
+            department=request.data.get('department', 'ALL'),
+            upload_announcement=request.FILES.get('upload_announcement')
+        )
+        return Response({"detail": "Announcement created"}, status=status.HTTP_201_CREATED)
+
+
+class AnnouncementDeleteView(APIView):
+    """
+    Delete announcements. Only HOD or Admin can delete (BR-DEPT-004).
+    """
+    permission_classes = [IsAuthenticated, IsHODOrDeptAdmin]
+
+    def delete(self, request):
+        ann_ids = request.data.get('announcement_ids', [])
+        if not ann_ids:
+            return Response({"detail": "No announcement IDs provided."}, status=status.HTTP_400_BAD_REQUEST)
         
-        if not user_info:
-            return Response({'error': 'User information not found'}, status=status.HTTP_404_NOT_FOUND)
+        deleted_count = Announcements.objects.filter(id__in=ann_ids).delete()[0]
+        return Response(
+            {"detail": f"Successfully deleted {deleted_count} announcement(s)."},
+            status=status.HTTP_204_NO_CONTENT
+        )
+
+    def put(self, request):
+        """
+        Edit or hide an announcement.
+        Expects: { "id": 1, "message": "Updated message", "is_hidden": true }
+        """
+        ann_id = request.data.get('id')
+        if not ann_id:
+            return Response({"detail": "Announcement ID is required."}, status=status.HTTP_400_BAD_REQUEST)
         
-        ann_maker_id = user_info.id
-        department = user_info.department.name  # Get department name
-        
-        # Get the data from the request
-        data = request.data.copy()  # Copy request data to modify
-        
-        # Add the department and announcement maker to the data
-        data['ann_maker'] = ann_maker_id
-        
-        # Instantiate the serializer with the modified data
-        serializer = AnnouncementSerializer(data=data, context={'request': request})
-        
-        # Validate and save if the data is valid
-        if serializer.is_valid():
-            # Save the data to the Announcement model
-            serializer.save()  # This automatically saves the data in the Announcements table
-            
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        
-        # If invalid, return the errors
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
-    
+        try:
+            announcement = Announcements.objects.get(id=ann_id)
+            if 'message' in request.data:
+                announcement.message = request.data.get('message')
+            if 'is_hidden' in request.data:
+                announcement.is_hidden = request.data.get('is_hidden')
+            announcement.save()
+            return Response({"detail": "Announcement updated successfully."}, status=status.HTTP_200_OK)
+        except Announcements.DoesNotExist:
+            return Response({"detail": "Announcement not found."}, status=status.HTTP_404_NOT_FOUND)
+
+
+# =====================
+# Department Info Views
+# =====================
+
 class DepMainAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def get(self, request):
         user = request.user
-        usrnm = get_object_or_404(User, username=user.username)
-        user_info = ExtraInfo.objects.all().select_related('user', 'department').filter(user=usrnm).first()
-        ann_maker_id = user_info.id
-        user_info = ExtraInfo.objects.all().select_related('user', 'department').get(id=ann_maker_id)
-        department_name = user_info.department.name if user_info.department else "Unknown" 
+        
+        # Efficiently fetch ExtraInfo and Department
+        user_info = ExtraInfo.objects.select_related('department').filter(user=user).first()
+        
+        department_name = "Unknown"
+        if user_info and user_info.department:
+            department_name = user_info.department.name
 
-        fac_view = user.holds_designations.filter(designation__name='faculty').exists()
-        student = user.holds_designations.filter(designation__name='student').exists()
-        staff = user.holds_designations.filter(designation__name='staff').exists()
+        # Check designations to determine role - Prioritize administrative roles
+        designations = user.holds_designations.values_list('designation__name', flat=True)
+        designations_lower = [d.lower() for d in designations]
 
-        # context = browse_announcements()
-        # context_f = faculty()
-        user_designation = ""
-
-        if fac_view:
+        is_hod = any('hod' in d for d in designations_lower)
+        is_admin = any('admin' in d for d in designations_lower)
+        is_faculty = 'faculty' in designations_lower
+        is_student = 'student' in designations_lower
+        
+        if is_hod:
+            # Return a string containing 'hod' so frontend detects it
+            user_designation = "hod"
+            # Try to be more specific if possible (optional but helpful)
+            for d in designations:
+                if 'HOD' in d:
+                    user_designation = d
+                    break
+        elif is_admin:
+            user_designation = "dept_admin"
+            for d in designations:
+                if 'admin' in d.lower():
+                    user_designation = d
+                    break
+        elif is_faculty:
             user_designation = "faculty"
-        elif student:
+        elif is_student:
             user_designation = "student"
         else:
             user_designation = "staff"
-            
-        # serailizing the data
-        # announcements_serailizer = AnnouncementSerializer(context, many=True)
-        
 
         response_data = {
             "user_designation": user_designation,
             "department": department_name,
-            # "announcements": context,
-            # "fac_list": context_f
         }
-        
 
-        return Response(data = response_data, status=status.HTTP_200_OK)
-        # return Response(data = response_data, status=status.HTTP_200_OK)
+        return Response(data=response_data, status=status.HTTP_200_OK)
+
         
 class FacAPIView(APIView):
     def get(self,request):
         usrnm = get_object_or_404(User, username=request.user.username)
         user_info = ExtraInfo.objects.all().select_related('user','department').filter(user=usrnm).first()
 
-
-        # context = browse_announcements()
-        
-        
         # Serialize the data into JSON formats
         data = {
             "user_designation": user_info.user_type,
-            # "announcements": list(context.values()),  # Assuming 'context' is a dictionary
         }
 
         return Response(data)
@@ -128,28 +185,56 @@ class StaffAPIView(APIView):
         usrnm = get_object_or_404(User, username=request.user.username)
         user_info = ExtraInfo.objects.all().select_related('user','department').filter(user=usrnm).first()
 
-
-        # context = browse_announcements()
-        
-        
         # Serialize the data into JSON formats
         data = {
             "user_designation": user_info.user_type,
-            # "announcements": list(context.values()),  # Assuming 'context' is a dictionary
         }
 
         return Response(data)
-    
+
+
+# =====================
+# Announcements Data Views
+# =====================
+
 class AnnouncementsDataAPIView(APIView):
-    def get(self,request,bid):
+    def get(self, request, bid):
         filter_branch = decode_branch(bid)
         if not filter_branch:
             return Response({'detail': 'Invalid bid value'}, status=status.HTTP_400_BAD_REQUEST)
         
-        ann = Announcements.objects.filter(department=filter_branch)
+        user = request.user
+        programme = "ALL"
+        batch = "ALL"
+
+        # If it's a student, we should filter by their specific programme and batch
+        student = Student.objects.filter(id__user=user).first()
+        if student:
+            programme = student.programme
+            # Map absolute batch back to relative Year-X for display filtering
+            current_year = datetime.now().year
+            current_month = datetime.now().month
+            yearset = current_year if current_month > 8 else current_year - 1
+            # Batch is e.g. 2022. Year-3 = 2024 - 2022 + 1 = 3
+            try:
+                relative_year = int(yearset) - int(student.batch) + 1
+                batch = f"Year-{relative_year}"
+            except:
+                batch = "ALL"
+
+        ann = get_announcements_selector(
+            department=filter_branch,
+            programme=programme,
+            batch=batch
+        )
         ann_serialized = AnnouncementSerializer(ann, many=True).data
         return Response(ann_serialized, status=status.HTTP_200_OK)
-    
+
+
+# =====================
+# Faculty Data Views
+# =====================
+
 class FacultyDataAPIView(APIView):
     def get(self, request, bid):
         filter_branch = decode_branch(bid)
@@ -160,6 +245,7 @@ class FacultyDataAPIView(APIView):
         response_data = ExtraInfoSerializer(fac, many=True).data
         return Response(response_data, status=status.HTTP_200_OK)
     
+
 def decode_branch(bid):
     try:
         branch = bid.replace('_', ' ')
@@ -169,7 +255,12 @@ def decode_branch(bid):
 
     except (IndexError, KeyError):
         return None  # Handle malformed bid values
-    
+
+
+# =====================
+# Student Data Views
+# =====================
+
 class AllStudentsAPIView(APIView):
     def get(self, request, bid):
         # Decode bid to filter criteria
@@ -199,6 +290,22 @@ class AllStudentsAPIView(APIView):
 
         return Response(response_data, status=status.HTTP_200_OK)
 
+
+class StudentCoursesAPIView(APIView):
+    permission_classes = [IsAuthenticated, IsStudentOnly]
+
+    def get(self, request):
+        courses = get_student_courses_selector(request.user)
+        results = []
+        for c in courses:
+            results.append({
+                'id': c.curriculum_id,
+                'course_code': c.course_code,
+                'course_name': c.course_id.course_name,
+                'sem': c.sem
+            })
+        return Response(results, status=status.HTTP_200_OK)
+
 def decode_bid(bid):
     """Decode bid into filter criteria."""
     try:
@@ -225,10 +332,16 @@ def decode_bid(bid):
     except (IndexError, KeyError):
         return None  # Handle malformed bid values
 
+
+# =====================
+# Department Information Views
+# =====================
+
 class InformationAPIView(generics.ListAPIView):
     queryset = Information.objects.all()
     serializer_class = InformationSerializer
     permission_classes = (IsFacultyStaffOrReadOnly,)
+
 class InformationUpdateAPIView(APIView):
     def put(self, request):
         # Ensure the data only contains phone_number, email, and facilities
@@ -257,37 +370,11 @@ class InformationUpdateAPIView(APIView):
             message = "Information updated successfully."
 
         return Response({"message": message, "data": serializer.data}, status=status.HTTP_200_OK)
-# class UpdateOrCreateInformationAPIView(APIView):
-#     """
-#     This view will handle POST requests to either update or create
-#     an Information entry for a department.
-#     """
-#     def post(self, request):
-#         department_name = request.data.get('department')
-#         phone_number = request.data.get('phone_number')
-#         email = request.data.get('email')
-#         facilities = request.data.get('facilities')
 
-#         # Retrieve the department
-#         department = DepartmentInfo.objects.filter(name=department_name).first()
-#         if not department:
-#             return Response({"error": "Department not found."}, status=status.HTTP_400_BAD_REQUEST)
 
-#         # Check if an entry exists for the department
-#         information_entry, created = Information.objects.update_or_create(
-#             department=department,
-#             defaults={
-#                 'phone_number': phone_number,
-#                 'email': email,
-#                 'facilities': facilities
-#             }
-#         )
-
-#         serializer = InformationSerializer(information_entry)
-#         if created:
-#             return Response({"message": "Information created successfully.", "data": serializer.data}, status=status.HTTP_201_CREATED)
-#         else:
-#             return Response({"message": "Information updated successfully.", "data": serializer.data}, status=status.HTTP_200_OK)
+# =====================
+# Lab Views
+# =====================
 
 class LabListView(generics.ListAPIView):
     queryset = Lab.objects.all()  # Fetch all lab entries
@@ -328,203 +415,269 @@ class LabDeleteAPIView(APIView):
 
         return Response({"detail": f"Successfully deleted {deleted_count} labs."}, status=status.HTTP_204_NO_CONTENT)
     
-# def browse_announcements():
-#     """
-#     This function is used to browse Announcements Department-Wise
-#     made by different faculties and admin.
 
-#     @variables:
-#         cse_ann - Stores CSE Department Announcements
-#         ece_ann - Stores ECE Department Announcements
-#         me_ann - Stores ME Department Announcements
-#         sm_ann - Stores SM Department Announcements
-#         all_ann - Stores Announcements intended for all Departments
-#         context - Dictionary for storing all above data
+# =====================
+# Feedback Views (T5: Permission fix - BR-DEPT-008)
+# =====================
 
-#     """
-#     cse_ann = Announcements.objects.filter(department="CSE")
-#     ece_ann = Announcements.objects.filter(department="ECE")
-#     me_ann = Announcements.objects.filter(department="ME")
-#     sm_ann = Announcements.objects.filter(department="SM")
-#     ns_ann = Announcements.objects.filter(department="Natural Science")
-#     ds_ann = Announcements.objects.filter(department="Design")
-#     all_ann = Announcements.objects.filter(department="ALL")
-    
-#     # serailizing the data
-#     cse_ann_serialized = AnnouncementSerializer(cse_ann, many=True)
-#     ece_ann_serialized = AnnouncementSerializer(ece_ann, many=True)
-#     me_ann_serialized = AnnouncementSerializer(me_ann, many=True)
-#     sm_ann_serialized = AnnouncementSerializer(sm_ann, many=True)
-#     ns_ann_serialized = AnnouncementSerializer(ns_ann, many=True)
-#     ds_ann_serialized = AnnouncementSerializer(ds_ann, many=True)
-#     all_ann_serialized = AnnouncementSerializer(all_ann, many=True)
-
-#     context = {
-#         "cse" : cse_ann_serialized.data,
-#         "ece" : ece_ann_serialized.data,
-#         "me" : me_ann_serialized.data,
-#         "sm" : sm_ann_serialized.data,
-#         "ds" : ds_ann_serialized.data,
-#         "ns" : ns_ann_serialized.data,
-#         "all" : all_ann_serialized.data
-#     }
-
-#     return context
-
-# def faculty():
-#     """
-#     This function is used to Return data of Faculties Department-Wise.
-
-#     @variables:
-#         cse_f - Stores data of faculties from CSE Department
-#         ece_f - Stores data of faculties from ECE Department
-#         me_f - Stores data of faculties from ME Department
-#         sm_f - Stores data of faculties from ME Department
-#         context_f - Stores all above variables in Dictionary
-
-#     """
-#     cse_f=ExtraInfo.objects.filter(department__name='CSE',user_type='faculty')
-#     ece_f=ExtraInfo.objects.filter(department__name='ECE',user_type='faculty')
-#     me_f=ExtraInfo.objects.filter(department__name='ME',user_type='faculty')
-#     sm_f=ExtraInfo.objects.filter(department__name='SM',user_type='faculty')
-#     ds_f=ExtraInfo.objects.filter(department__name='Design', user_type='faculty')
-#     ns_f=ExtraInfo.objects.filter(department__name='Natural Science', user_type='faculty')
-#     staff=ExtraInfo.objects.filter(user_type='staff')
-
-#     # serailizing the data
-#     cse_f = ExtraInfoSerializer(cse_f, many=True)
-#     ece_f = ExtraInfoSerializer(ece_f, many=True)
-#     me_f = ExtraInfoSerializer(me_f, many=True)
-#     sm_f = ExtraInfoSerializer(sm_f, many=True)
-#     ds_f = ExtraInfoSerializer(ds_f, many=True)
-#     ns_f = ExtraInfoSerializer(ns_f, many=True)
-#     staff = ExtraInfoSerializer(staff, many=True)
-    
-
-#     context_f = {
-#         "cse_f" : cse_f.data,
-#         "ece_f" : ece_f.data,
-#         "me_f" : me_f.data,
-#         "sm_f" : sm_f.data,
-#         "ds_f" : ds_f.data,
-#         "ns_f" : ns_f.data,
-#         "staff" : staff.data,
-#     }
-#     return context_f
-
-class InformationAPIView(generics.ListAPIView):
-    queryset = Information.objects.all()
-    serializer_class = InformationSerializer
-    permission_classes = (IsFacultyStaffOrReadOnly,)
-class InformationUpdateAPIView(APIView):
-    def put(self, request):
-        # Ensure the data only contains phone_number, email, and facilities
-        data = request.data
-        fields_to_update = {key: data[key] for key in ["phone_number", "email", "facilites"] if key in data}
-
-        # Get the department string from the request
-        department_name = data.get("department")
-
-        # Get the department info using the department name string
-        department_info = DepartmentInfo.objects.filter(name=department_name).first()
-
-        if not department_info:
-            return Response({"detail": "Department not found."}, status=status.HTTP_404_NOT_FOUND)
-
-        # Update or create the Information entry for the department
-        information_instance, created = Information.objects.update_or_create(
-            department=department_info,
-            defaults=fields_to_update
-        )
-
-        serializer = InformationSerializer(information_instance)
-        if created:
-            message = "Information created successfully."
-        else:
-            message = "Information updated successfully."
-
-        return Response({"message": message, "data": serializer.data}, status=status.HTTP_200_OK)
-# class UpdateOrCreateInformationAPIView(APIView):
-#     """
-#     This view will handle POST requests to either update or create
-#     an Information entry for a department.
-#     """
-#     def post(self, request):
-#         department_name = request.data.get('department')
-#         phone_number = request.data.get('phone_number')
-#         email = request.data.get('email')
-#         facilities = request.data.get('facilities')
-
-#         # Retrieve the department
-#         department = DepartmentInfo.objects.filter(name=department_name).first()
-#         if not department:
-#             return Response({"error": "Department not found."}, status=status.HTTP_400_BAD_REQUEST)
-
-#         # Check if an entry exists for the department
-#         information_entry, created = Information.objects.update_or_create(
-#             department=department,
-#             defaults={
-#                 'phone_number': phone_number,
-#                 'email': email,
-#                 'facilities': facilities
-#             }
-#         )
-
-#         serializer = InformationSerializer(information_entry)
-#         if created:
-#             return Response({"message": "Information created successfully.", "data": serializer.data}, status=status.HTTP_201_CREATED)
-#         else:
-#             return Response({"message": "Information updated successfully.", "data": serializer.data}, status=status.HTTP_200_OK)
-
-class LabListView(generics.ListAPIView):
-    queryset = Lab.objects.all()  # Fetch all lab entries
-    serializer_class = LabSerializer
-
-
-class LabAPIView(APIView):
-    def post(self, request):
-        data = request.data
-
-        # Ensure all required fields are in the data
-        if not all(key in data for key in ["department", "location", "name", "capacity"]):
-            return Response({"detail": "Missing required fields."}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Create the Lab instance directly with the data provided
-        serializer = LabSerializer(data=data)
-        if serializer.is_valid():
-            lab = serializer.save()  # No need to set a department object
-            return Response(LabSerializer(lab).data, status=status.HTTP_201_CREATED)
-        
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-class LabDeleteAPIView(APIView):
-    def delete(self, request):
-        lab_ids = request.data.get('lab_ids', [])
-        
-        if not lab_ids:
-            return Response({"detail": "No lab IDs provided."}, status=status.HTTP_400_BAD_REQUEST)
-
-        deleted_count = 0
-        for lab_id in lab_ids:
-            try:
-                lab = Lab.objects.get(id=lab_id)
-                lab.delete()
-                deleted_count += 1
-            except Lab.DoesNotExist:
-                return Response({"detail": f"Lab with id {lab_id} does not exist."}, status=status.HTTP_404_NOT_FOUND)
-
-        return Response({"detail": f"Successfully deleted {deleted_count} labs."}, status=status.HTTP_204_NO_CONTENT)
-    
 class FeedbackCreateAPIView(generics.CreateAPIView):
+    """
+    Submit department feedback. Only students and faculty can submit (BR-DEPT-008).
+    Sends notification to HOD/Admin on new feedback (T8: BR-DEPT-014).
+    """
     queryset = Feedback.objects.all()
     serializer_class = FeedbackSerializer
+    permission_classes = [IsAuthenticated, IsStudentOrFaculty]
+
+    def perform_create(self, serializer):
+        import json
+        user = self.request.user
+        raw_remark = serializer.validated_data.get('remark', '')
+        course_name = self.request.data.get('course_name', 'General')
+        course_id = self.request.data.get('course_id', None)
+
+        json_remark = json.dumps({
+            'text': raw_remark,
+            'status': 'New',
+            'admin_remarks': '',
+            'submitter': user.username,
+            'course': course_name,
+            'course_id': course_id
+        })
+        feedback = serializer.save(remark=json_remark)
+
+        # Notification logic
+        try:
+            # 1. Always notify HOD
+            hod_recipients = User.objects.filter(
+                holds_designations__designation__name__startswith='HOD'
+            ).distinct()
+            
+            if hod_recipients.exists():
+                department_notif(
+                    user, hod_recipients,
+                    f"New {course_name} feedback for {feedback.department}: {feedback.rating}"
+                )
+
+            # 2. If course specific, notify instructor
+            if course_id:
+                instructors = Curriculum_Instructor.objects.filter(
+                    curriculum_id_id=course_id
+                ).select_related('instructor_id__user')
+                
+                instructor_users = [ins.instructor_id.user for ins in instructors]
+                if instructor_users:
+                    department_notif(
+                        user, instructor_users,
+                        f"Course Feedback received for {course_name}: {feedback.rating}"
+                    )
+        except Exception as e:
+            print(f"Feedback notification error: {e}")
 
 class FeedbackListView(generics.ListAPIView):
-    queryset = Feedback.objects.all()
     serializer_class = FeedbackSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        queryset = Feedback.objects.all()
+        
+        # 1. Check if user is HOD or Admin (Full Access)
+        user_designations = user.holds_designations.values_list('designation__name', flat=True)
+        is_hod_or_admin = any('hod' in d.lower() or 'admin' in d.lower() for d in user_designations)
+        
+        if is_hod_or_admin:
+            return queryset
+
+        # 2. If Faculty, filter by courses they teach (Restricted Access)
+        is_faculty = ExtraInfo.objects.filter(user=user, user_type='faculty').exists() or \
+                     any('professor' in d.lower() or 'faculty' in d.lower() for d in user_designations)
+        
+        if is_faculty:
+            from applications.academic_information.models import Curriculum_Instructor
+            from django.db.models import Q
+            
+            # Use the user's ExtraInfo to find taught curriculums
+            user_info = ExtraInfo.objects.filter(user=user).first()
+            if not user_info:
+                return queryset.none()
+
+            taught_curriculums = Curriculum_Instructor.objects.filter(
+                instructor_id=user_info
+            ).values_list('curriculum_id', flat=True)
+
+            if not taught_curriculums:
+                return queryset.filter(remark__contains=f'"submitter": "{user.username}"')
+            else:
+                q_objects = Q()
+                for cid in taught_curriculums:
+                    # Highly robust search: Match the ID in any JSON format
+                    q_objects |= Q(remark__contains=f'"course_id": {cid}')
+                    q_objects |= Q(remark__contains=f'"course_id":{cid}')
+                    q_objects |= Q(remark__contains=f'"course_id": "{cid}"')
+                    q_objects |= Q(remark__contains=f'"course_id":"{cid}"')
+                
+                # Return both feedback they received for their courses and feedback they submitted
+                return queryset.filter(q_objects) | queryset.filter(remark__contains=f'"submitter": "{user.username}"')
+
+        # 3. If Student, filter by their own username in the remark JSON
+        is_student = any('student' in d.lower() for d in user_designations) or \
+                     ExtraInfo.objects.filter(user=user, user_type='student').exists()
+        
+        if is_student:
+            # We match the submitter field we saved in perform_create
+            return queryset.filter(remark__contains=f'"submitter": "{user.username}"')
+
+        # 4. Default: No access if roles don't match
+        return queryset.none()
 
 
+class FeedbackUpdateAPIView(APIView):
+    """
+    Update feedback status and add admin remarks.
+    Only HOD or Admin can perform this. (BR-DEPT-009)
+    """
+    permission_classes = [IsAuthenticated, IsHODOrDeptAdmin]
 
+    def put(self, request, pk):
+        import json
+        try:
+            feedback = Feedback.objects.get(pk=pk)
+        except Feedback.DoesNotExist:
+            return Response({'error': 'Feedback not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            current_remark = json.loads(feedback.remark)
+        except (ValueError, TypeError):
+            current_remark = {'text': feedback.remark, 'submitter': 'Anonymous'}
+
+        new_status = request.data.get('status', current_remark.get('status', 'New'))
+        admin_remarks = request.data.get('admin_remarks', current_remark.get('admin_remarks', ''))
+
+        current_remark['status'] = new_status
+        current_remark['admin_remarks'] = admin_remarks
+
+        feedback.remark = json.dumps(current_remark)
+        feedback.save()
+
+        submitter_username = current_remark.get('submitter', '')
+        if submitter_username and submitter_username != 'Anonymous':
+            try:
+                submitter_user = User.objects.filter(username=submitter_username).first()
+                if submitter_user:
+                    department_notif(
+                        request.user, submitter_user,
+                        f"Your feedback status has been updated to {new_status}"
+                    )
+            except Exception as e:
+                pass
+
+        serializer = FeedbackSerializer(feedback)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+# =====================
+# Department Update Approval Views (DEPT-UC-010, DEPT-UC-012)
+# =====================
+from applications.department.models import SpecialRequest
+
+class DepartmentUpdateProposalCreateView(APIView):
+    """
+    Create a SpecialRequest for Department Info update (DEPT-UC-010).
+    Allows HOD/Admin/Faculty to propose changes.
+    """
+    permission_classes = [IsAuthenticated, IsFacultyOrStaff]
+
+    def post(self, request):
+        import json
+        user = request.user
+        usrnm = get_object_or_404(User, username=user.username)
+        user_info = ExtraInfo.objects.filter(user=usrnm).first()
+        
+        department_name = user_info.department.name if user_info.department else "Unknown"
+
+        data = request.data
+        fields_to_update = {key: data[key] for key in ["phone_number", "email", "facilites"] if key in data}
+        
+        json_changes = json.dumps(fields_to_update)[:200]  # Ensure it fits in max_length=200
+
+        SpecialRequest.objects.create(
+            request_maker=user_info,
+            brief='DEPT_UPDATE',
+            request_details=json_changes,
+            status='Pending',
+            remarks=str(department_name)[:300],
+            request_receiver='HOD'
+        )
+        
+        # Notify HOD
+        try:
+            recipients = User.objects.filter(holds_designations__designation__name__startswith='HOD')
+            department_notif(user, recipients, f"New Department Profile Update Proposal received.")
+        except Exception:
+            pass
+
+        return Response({'message': 'Proposal created successfully.'}, status=status.HTTP_201_CREATED)
+
+class DepartmentUpdateProposalReviewView(APIView):
+    """
+    HOD approves/rejects Department Info update (DEPT-UC-012).
+    """
+    permission_classes = [IsAuthenticated, IsHODOrDeptAdmin]  # Assuming admin can also fetch it
+
+    def get(self, request):
+        # List all pending dept updates
+        updates = SpecialRequest.objects.filter(brief='DEPT_UPDATE').order_by('-request_date')
+        
+        results = []
+        for u in updates:
+            results.append({
+                'id': u.id,
+                'proposer': u.request_maker.user.username,
+                'request_date': u.request_date,
+                'status': u.status,
+                'department': u.remarks,
+                'changes': u.request_details
+            })
+        return Response(results, status=status.HTTP_200_OK)
+
+    def put(self, request, pk):
+        import json
+        try:
+            update_req = SpecialRequest.objects.get(pk=pk, brief='DEPT_UPDATE')
+        except SpecialRequest.DoesNotExist:
+            return Response({'error': 'Proposal not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        action = request.data.get('action')
+        
+        if action == 'approve':
+            # Apply changes
+            department_name = update_req.remarks
+            department_info = DepartmentInfo.objects.filter(name=department_name).first()
+            if department_info:
+                try:
+                    changes = json.loads(update_req.request_details)
+                    Information.objects.update_or_create(
+                        department=department_info,
+                        defaults=changes
+                    )
+                except Exception as e:
+                    pass
+            update_req.status = 'Approved'
+            update_req.save()
+            return Response({'message': 'Approved successfully'}, status=status.HTTP_200_OK)
+            
+        elif action == 'reject':
+            update_req.status = 'Rejected'
+            update_req.save()
+            return Response({'message': 'Rejected successfully'}, status=status.HTTP_200_OK)
+            
+        return Response({'error': 'Invalid action'}, status=status.HTTP_400_BAD_REQUEST)
+
+
+# =====================
+# Facility Views
+# =====================
 
 # View for listing and creating facilities
 class FacilityListCreateAPIView(generics.ListCreateAPIView):
@@ -578,3 +731,118 @@ class FacilityBulkDeleteAPIView(APIView):
             return Response({"detail": "No facility IDs provided."}, status=status.HTTP_400_BAD_REQUEST)
         Facility.objects.filter(id__in=ids).delete()
         return Response({"detail": "Facilities deleted successfully."}, status=status.HTTP_204_NO_CONTENT)
+
+
+# =====================
+# Stock Views (T1: DEPT-WF-103 Stock Workflow)
+# =====================
+
+class StockItemListCreateView(generics.ListCreateAPIView):
+    """
+    List all stock items or create new ones.
+    GET: Any authenticated user can view stock.
+    POST: Only HOD/DeptAdmin can add stock items.
+    """
+    serializer_class = StockItemSerializer
+    permission_classes = [IsAuthenticated, IsHODOrDeptAdmin]
+
+    def get_queryset(self):
+        department = self.request.query_params.get('department', None)
+        return get_stock_items_selector(department=department)
+
+    def perform_create(self, serializer):
+        stock_item = serializer.save()
+        # Create audit log entry
+        user_info = ExtraInfo.objects.filter(user=self.request.user).first()
+        if user_info:
+            StockLog.objects.create(
+                stock_item=stock_item,
+                action='Add',
+                performed_by=user_info,
+                quantity=stock_item.quantity,
+                remarks=f"Stock item '{stock_item.name}' added to inventory"
+            )
+
+
+class StockRequestCreateView(APIView):
+    """
+    Submit a stock request (DEPT-UC-004).
+    Any faculty/staff can submit a stock request.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            stock_request = create_stock_request_service(
+                requester_user=request.user,
+                stock_item_id=request.data.get('stock_item'),
+                quantity_requested=request.data.get('quantity_requested'),
+                remarks=request.data.get('remarks', '')
+            )
+            return Response(StockRequestSerializer(stock_request).data, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class StockRequestListView(generics.ListAPIView):
+    """
+    List stock requests filtered by department.
+    """
+    serializer_class = StockRequestSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        department = self.request.query_params.get('department', None)
+        status_filter = self.request.query_params.get('status', None)
+        return get_stock_requests_selector(department=department, status=status_filter)
+
+
+class StockApprovalView(APIView):
+    """
+    Approve or reject a stock request (DEPT-UC-005).
+    Only HOD can approve/reject.
+    """
+    permission_classes = [IsAuthenticated, IsHOD]
+
+    def put(self, request, pk):
+        try:
+            stock_request = approve_stock_request_service(
+                approver_user=request.user,
+                request_id=pk,
+                action=request.data.get('action'),
+                remarks=request.data.get('remarks', '')
+            )
+            return Response(StockRequestSerializer(stock_request).data, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class StockIssuanceView(APIView):
+    """
+    Issue approved stock (DEPT-UC-006).
+    Only DeptAdmin can issue stock. Updates inventory quantities.
+    """
+    permission_classes = [IsAuthenticated, IsDeptAdmin]
+
+    def put(self, request, pk):
+        try:
+            stock_request = issue_stock_service(
+                issuer_user=request.user,
+                request_id=pk,
+                remarks=request.data.get('remarks', '')
+            )
+            return Response(StockRequestSerializer(stock_request).data, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class StockLogListView(generics.ListAPIView):
+    """
+    View stock audit trail.
+    """
+    serializer_class = StockLogSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        department = self.request.query_params.get('department', None)
+        return get_stock_logs_selector(department=department)
